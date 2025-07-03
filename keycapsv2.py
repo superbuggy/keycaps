@@ -13,11 +13,11 @@ SPACING = 19.05  # Standard 1U spacing in mm
 # Keycap Dimensions (based on MBK standard)
 CAP_WIDTH = 17.4   # X-dimension
 CAP_DEPTH = 16.4   # Y-dimension
-TOP_THICKNESS = 1.5  # Thickness of the top plate
+TOP_THICKNESS = 2.5  # Thickness of the top plate
 
 # Ergonomic Parameters
 CORNER_RADIUS = 2.0  # How rounded the keycap corners are
-DISH_DEPTH = 0.6     # How deep the central depression is
+DISH_DEPTH = 2.2     # How deep the central depression is
 
 # Stem Dimensions (for Kailh Choc switches)
 STEM_HEIGHT = 3.5
@@ -25,7 +25,7 @@ STEM_HEIGHT = 3.5
 PATTERN_HEIGHT = 0.8  # How high the pattern rises from the keycap top
 RIDGE_THICKNESS = 0.4 # Thickness of the concentric walls
 NUM_CONCENTRIC_STEPS = 3 # Number of concentric lines per cell
-VORONOI_POINTS = 25   # Number of points to generate the Voronoi cells
+VORONOI_POINTS = 45   # Number of points to generate the Voronoi cells
 
 OUTPUT_FILENAME = 'tessellated_keycaps.stl'
 
@@ -176,7 +176,7 @@ def generate_keycap_grid():
             z_tolerance = 0.1
             top_vertex_indices = np.where(vertices[:, 2] > max_z - PATTERN_HEIGHT - z_tolerance)[0]
             
-            max_effect_radius = min(CAP_WIDTH, CAP_DEPTH) / 2.0
+            max_effect_radius = min(CAP_WIDTH, CAP_DEPTH) * 0.75
             
             for i in top_vertex_indices:
                 v = vertices[i]
