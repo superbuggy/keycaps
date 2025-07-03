@@ -1,7 +1,7 @@
 import trimesh
 import numpy as np
 from scipy.spatial import Voronoi
-from shapely.geometry import Polygon, MultiPolygon
+from shapely.geometry import Polygon, MultiPolygon, box
 
 # --- PARAMETERS ---
 
@@ -15,10 +15,14 @@ CAP_WIDTH = 17.4   # X-dimension
 CAP_DEPTH = 16.4   # Y-dimension
 TOP_THICKNESS = 1.5  # Thickness of the top plate
 
+# Ergonomic Parameters
+CORNER_RADIUS = 2.0  # How rounded the keycap corners are
+DISH_DEPTH = 0.6     # How deep the central depression is
+
 # Stem Dimensions (for Kailh Choc switches)
 STEM_HEIGHT = 3.5
 # Tessellation Parameters
-PATTERN_HEIGHT = 1.0  # How high the pattern rises from the keycap top
+PATTERN_HEIGHT = 0.8  # How high the pattern rises from the keycap top
 RIDGE_THICKNESS = 0.4 # Thickness of the concentric walls
 NUM_CONCENTRIC_STEPS = 3 # Number of concentric lines per cell
 VORONOI_POINTS = 25   # Number of points to generate the Voronoi cells
@@ -30,8 +34,8 @@ def create_tessellated_top(width, depth):
     """
     Generates a 3D mesh of a Voronoi tessellation pattern.
     """
-    # 1. Generate random points for the Voronoi diagram
-    points = np.random.rand(VORONOI_POINTS, 2)
+    # 1. Generate random points for the Voronoi diagram, centered around (0,0).
+    points = (np.random.rand(VORONOI_POINTS, 2) - 0.5)
     points[:, 0] *= width
     points[:, 1] *= depth
 
@@ -39,7 +43,7 @@ def create_tessellated_top(width, depth):
     vor = Voronoi(points)
     
     # Bounding box for clipping polygons that go to infinity
-    bounding_box = Polygon([(0, 0), (0, depth), (width, depth), (width, 0)])
+    bounding_box = Polygon([(-width/2, -depth/2), (-width/2, depth/2), (width/2, depth/2), (width/2, -depth/2)])
     
     all_ridges = []
 
@@ -83,7 +87,7 @@ def create_tessellated_top(width, depth):
     return tessellation_mesh
 
 
-def create_keycap_body(width):
+def create_stems(width):
     """
     Creates the stem mount for the keycap.
     This version models two "I"-shaped grip posts, rotates each one 90 degrees
@@ -144,33 +148,55 @@ def generate_keycap_grid():
             print(f"Generating keycap ({row+1}, {col+1})...")
             
             # 1. Create the stems, with their base at z=0
-            stems = create_keycap_body(CAP_WIDTH)
+            stems = create_stems(CAP_WIDTH)
             
-            # 2. Create the top surface, starting with a solid base plate
-            top_base = trimesh.creation.box(bounds=[(-CAP_WIDTH/2, -CAP_DEPTH/2, 0),
-                                                    (CAP_WIDTH/2, CAP_DEPTH/2, TOP_THICKNESS)])
+            # 2. Create the flat, rounded-corner top plate
+            b = box(-CAP_WIDTH/2 + CORNER_RADIUS, -CAP_DEPTH/2 + CORNER_RADIUS, 
+                    CAP_WIDTH/2 - CORNER_RADIUS, CAP_DEPTH/2 - CORNER_RADIUS)
+            rounded_rect = b.buffer(CORNER_RADIUS)
+            top_base = trimesh.load_path(rounded_rect).extrude(height=TOP_THICKNESS)
 
             # 3. Create the unique tessellated pattern
             tessellation_pattern = create_tessellated_top(CAP_WIDTH, CAP_DEPTH)
             
             full_top = top_base
             if tessellation_pattern:
-                # Center the pattern and place it on top of the base plate
-                center_offset = tessellation_pattern.bounds.mean(axis=0)
-                tessellation_pattern.apply_translation(-center_offset)
+                # Place the pattern on top of the base plate
                 tessellation_pattern.apply_translation([0, 0, TOP_THICKNESS])
                 
-                # Union the base plate and the pattern
+                # FIX: Union the base and pattern into a single unified object *before* deformation.
                 full_top = trimesh.boolean.union([top_base, tessellation_pattern])
 
-            # 4. Assemble the final keycap without perimeter walls.
+            # 4. Apply a deformation to the unified top surface to create the fingertip dish.
+            vertices = full_top.vertices
+            
+            # Identify only the vertices on the top surface to be deformed.
+            # We consider any vertex near the max height of the object to be on the top.
+            max_z = full_top.bounds[1][2]
+            z_tolerance = 0.1
+            top_vertex_indices = np.where(vertices[:, 2] > max_z - PATTERN_HEIGHT - z_tolerance)[0]
+            
+            max_effect_radius = min(CAP_WIDTH, CAP_DEPTH) / 2.0
+            
+            for i in top_vertex_indices:
+                v = vertices[i]
+                dist = np.linalg.norm(v[:2]) # Distance from center in XY plane
+                if dist < max_effect_radius:
+                    # Use a cosine curve for a smooth falloff
+                    scale = (np.cos(dist / max_effect_radius * np.pi) + 1) / 2
+                    z_displacement = scale * DISH_DEPTH
+                    vertices[i][2] -= z_displacement
+            
+            full_top.vertices = vertices # Apply the transformed vertices back to the mesh
+
+            # 5. Assemble the final keycap without perimeter walls.
             # Move the top surface up so the stems can sit underneath.
             full_top.apply_translation([0, 0, STEM_HEIGHT])
             
             # Union the top surface and the stems.
             final_keycap = trimesh.boolean.union([full_top, stems])
 
-            # 5. Position the completed keycap in the grid
+            # 6. Position the completed keycap in the grid
             x_pos = col * SPACING
             y_pos = row * SPACING
             final_keycap.apply_translation([x_pos, y_pos, 0])
@@ -178,7 +204,7 @@ def generate_keycap_grid():
             all_keycaps.append(final_keycap)
 
     print("\nMerging all keycaps into a single file. This may take a moment...")
-    # 6. Combine all keycaps into one mesh
+    # 7. Combine all keycaps into one mesh
     final_grid = trimesh.util.concatenate(all_keycaps)
 
     # Export the final result
